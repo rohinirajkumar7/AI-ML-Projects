@@ -1,0 +1,13 @@
+backend: 
+cd backend
+npm install
+npm run dev
+
+frontend:
+cd frontend
+npm install
+npm run dev
+
+make sure to enable api key from openrouter
+account: rohiniamrutha1427@gmail.com 
+chatbot-key

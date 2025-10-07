@@ -1,0 +1,369 @@
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\backend\package.json =======
+
+{
+  "name": "ai-chatbot-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2"
+    
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
+
+// ======= C:\projects\AIML-projects\ai-chatbot\backend\routes\chat.js =======
+
+const express = require('express');
+const router = express.Router();
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1/chat/completions';
+
+const API_KEY = process.env.OPENROUTER_API_KEY;
+if (!API_KEY) {
+  console.warn('WARNING: OPENROUTER_API_KEY not set. Add it to your .env');
+}
+
+// Basic POST /api/chat
+// Body: { messages: [{role:"user", content:"..."}, ...], model: "meta-llama/llama-4-scout", temperature?:0.7 }
+router.post('/', async (req, res) => {
+  try {
+    const { messages, model = 'meta-llama/llama-4-scout', temperature = 0.2, max_tokens = 1024 } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'messages (array) is required in body' });
+    }
+    if (!API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY not configured on server' });
+
+    const payload = {
+      model,
+      messages,
+      temperature,
+      max_tokens
+    };
+
+    // use global fetch (Node 18+) or node-fetch
+    const fetch = global.fetch;
+
+
+    const r = await fetch(OPENROUTER_BASE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!r.ok) {
+      const text = await r.text();
+      console.error('OpenRouter error:', r.status, text);
+      return res.status(502).json({ error: 'Upstream error from OpenRouter', status: r.status, body: text });
+    }
+
+    const data = await r.json();
+    // Return the raw OpenRouter response so frontend can choose formatting
+    return res.json(data);
+  } catch (err) {
+    console.error('Server error', err);
+    return res.status(500).json({ error: 'server_error', message: err.message });
+  }
+});
+
+module.exports = router;
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\backend\server.js =======
+
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const chatRoute = require('./routes/chat');
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+app.use(cors({
+  origin: 'http://localhost:5173' // frontend dev origin — update for production
+}));
+app.use(express.json({ limit: '1mb' }));
+
+app.use('/api/chat', chatRoute);
+
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'AI chatbot backend' });
+});
+
+app.listen(PORT, () => {
+  console.log(`Backend listening on http://localhost:${PORT}`);
+});
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\index.html =======
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Chatbot</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\package.json =======
+
+{
+  "name": "ai-chatbot-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "lucide-react": "^0.544.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "vite": "^5.2.0"
+  }
+}
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\postcss.config.cjs =======
+
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\src\App.jsx =======
+
+import React, { useState } from 'react';
+import ChatWindow from './components/ChatWindow';
+import ChatInput from './components/ChatInput';
+import { Bot, Cpu } from 'lucide-react'; // A lightweight icon library
+
+export default function App() {
+  const [messages, setMessages] = useState([
+    { role: 'assistant', content: "Hi! I'm your virtual assistant. I can help with daily tasks, maths, reasoning, and programming. How can I help you today?" }
+  ]);
+  const [loading, setLoading] = useState(false);
+
+  const sendMessage = async (userText) => {
+    const newMessages = [...messages, { role: 'user', content: userText }];
+    setMessages(newMessages);
+    setLoading(true);
+
+    try {
+      const resp = await fetch('http://localhost:4000/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: newMessages,
+          model: 'meta-llama/llama-4-scout',
+          temperature: 0.2
+        })
+      });
+      const data = await resp.json();
+      const assistantMsg = data?.choices?.[0]?.message?.content || JSON.stringify(data);
+      setMessages([...newMessages, { role: 'assistant', content: assistantMsg }]);
+    } catch (err) {
+      console.error(err);
+      setMessages([...newMessages, { role: 'assistant', content: 'Error: Could not reach the backend. Please ensure it is running.' }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-sans">
+      <div className="w-full max-w-3xl h-[85vh] bg-slate-800 rounded-2xl shadow-2xl p-4 flex flex-col">
+        <header className="flex items-center justify-between border-b border-slate-600 pb-3">
+          <div className="flex items-center gap-3">
+            <Bot size={32} className="text-pink-400" />
+            <h1 className="text-xl font-semibold">AI Assistant</h1>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-slate-400">
+            <Cpu size={16} />
+            <span>meta-llama/llama-4-scout</span>
+          </div>
+        </header>
+        <ChatWindow messages={messages} loading={loading} />
+        <ChatInput onSend={sendMessage} disabled={loading} />
+      </div>
+    </div>
+  );
+}
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\src\components\ChatInput.jsx =======
+
+import React, { useState } from 'react';
+import { Send } from 'lucide-react';
+
+export default function ChatInput({ onSend, disabled }) {
+  const [text, setText] = useState('');
+
+  const submit = (e) => {
+    e?.preventDefault();
+    if (!text.trim()) return;
+    onSend(text.trim());
+    setText('');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        submit(e);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex gap-3 items-center p-2 bg-slate-700 rounded-lg">
+      <input
+        className="flex-1 bg-transparent border-none p-3 focus:outline-none placeholder-slate-400"
+        placeholder="Ask anything..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
+        disabled={disabled}
+      />
+      <button
+        type="submit"
+        className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center justify-center disabled:bg-slate-500 disabled:cursor-not-allowed transition-colors"
+        disabled={disabled || !text.trim()}
+      >
+        <Send size={20} />
+      </button>
+    </form>
+  );
+}
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\src\components\ChatWindow.jsx =======
+
+import React, { useRef, useEffect } from 'react';
+import { Bot, User } from 'lucide-react';
+
+const TypingIndicator = () => (
+  <div className="flex items-center gap-2">
+    <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center flex-shrink-0">
+      <Bot className="text-white" />
+    </div>
+    <div className="bg-slate-700 px-4 py-3 rounded-xl flex items-center gap-1">
+      <span className="h-2 w-2 bg-slate-400 rounded-full animate-bounce delay-0"></span>
+      <span className="h-2 w-2 bg-slate-400 rounded-full animate-bounce delay-150"></span>
+      <span className="h-2 w-2 bg-slate-400 rounded-full animate-bounce delay-300"></span>
+    </div>
+  </div>
+);
+
+export default function ChatWindow({ messages, loading }) {
+  const scrollRef = useRef();
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, loading]);
+
+  return (
+    <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 my-4">
+      {messages.map((m, i) => {
+        if (m.role === 'system') return null; // Don't render system messages
+        const isUser = m.role === 'user';
+        return (
+          <div key={i} className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isUser ? 'bg-blue-600' : 'bg-slate-700'}`}>
+              {isUser ? <User /> : <Bot />}
+            </div>
+            <div className={`max-w-[80%] p-4 rounded-xl whitespace-pre-wrap ${isUser ? 'bg-blue-600 rounded-br-none' : 'bg-slate-700 rounded-bl-none'}`}>
+              {m.content}
+            </div>
+          </div>
+        );
+      })}
+      {loading && <TypingIndicator />}
+    </div>
+  );
+}
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\src\main.jsx =======
+
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import './styles/index.css';
+
+createRoot(document.getElementById('root')).render(<App />);
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\src\styles\index.css =======
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Custom Scrollbar for a cleaner look */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e293b; /* slate-800 */
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569; /* slate-600 */
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b; /* slate-500 */
+}
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\tailwind.config.cjs =======
+
+module.exports = {
+  content: ['./index.html', './src/**/*.{js,jsx}'],
+  theme: { extend: {} },
+  plugins: []
+};
+
+
+// ======= C:\projects\AIML-projects\ai-chatbot\frontend\vite.config.mjs =======
+
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+  },
+});
+
